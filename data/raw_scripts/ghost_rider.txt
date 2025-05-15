@@ -1,0 +1,4 @@
+Title: Ghost Rider
+Source: IMSDb
+
+Script Content:

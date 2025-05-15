@@ -1,0 +1,4 @@
+Title: Warrior
+Source: IMSDb
+
+Script Content:
