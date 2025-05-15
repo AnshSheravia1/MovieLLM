@@ -11,5 +11,7 @@ uvicorn>=0.22.0
 python-dotenv>=1.0.0
 groq>=0.3.0
 langchain>=0.0.267
-faiss-cpu>=1.7.4
-sentence-transformers>=2.2.2 
+--find-links https://github.com/kyamagu/faiss-wheels/releases/download/v1.7.4/faiss_cpu-1.7.4-cp39-cp39-manylinux_2_17_x86_64.whl
+faiss-cpu==1.7.4
+sentence-transformers>=2.2.2
+slowapi>=0.1.8 
