@@ -1,0 +1,10 @@
+{
+  "files": {
+    "main.js": "/MovieLLM/static/js/main.2d3a9682.js",
+    "index.html": "/MovieLLM/index.html",
+    "main.2d3a9682.js.map": "/MovieLLM/static/js/main.2d3a9682.js.map"
+  },
+  "entrypoints": [
+    "static/js/main.2d3a9682.js"
+  ]
+}
