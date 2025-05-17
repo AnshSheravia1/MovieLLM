@@ -1,7 +1,7 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from typing import List, Optional, Dict as TypingDict, Union
+from typing import List,Any, Optional, Dict as TypingDict, Union
 import os
 from pathlib import Path
 import logging
@@ -63,8 +63,10 @@ class ScriptResponse(BaseModel):
     acts: List[ActSummary] 
     scenes: List[Scene]
 
-def parse_llm_output_to_script_response(generated_text: str) -> TypingDict[str, any]:
-    parsed_data = {
+
+
+def parse_llm_output_to_script_response(generated_text: str) -> TypingDict[str, Any]:
+    parsed = {
         "title": "Untitled Movie",
         "characters": [],
         "synopsis": None,
@@ -72,129 +74,97 @@ def parse_llm_output_to_script_response(generated_text: str) -> TypingDict[str, 
         "scenes": []
     }
 
-    # Normalize line breaks and clean up common LLM artifacts like "[SCENE START]"
-    text = generated_text.replace("\\r\\n", "\\n").replace("\\r", "\\n")
-    text = re.sub(r"^\s*\[.*?\]\s*$\\n?", "", text, flags=re.MULTILINE) # Remove [SCENE START] etc.
+    # Normalize newlines
+    text = generated_text.replace("\\r\\n", "\n").replace("\\r", "\n")
 
-    # Define regex for major sections
-    title_match = re.search(r"MOVIE TITLE:(.*?)(MAIN CHARACTERS:|SYNOPSIS:|$)", text, re.IGNORECASE | re.DOTALL)
-    characters_match = re.search(r"(?:\*\*)?MAIN CHARACTERS:(?:\*\*)?(.*?)(SYNOPSIS:|ACT 1 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
-    synopsis_match = re.search(r"SYNOPSIS:(.*?)(ACT 1 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
-    act1_match = re.search(r"(?:\*\*)?ACT 1 SUMMARY(?:\s*\(Setup\))?:(?:\*\*)?(.*?)(ACT 2 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
-    act2_match = re.search(r"(?:\*\*)?ACT 2 SUMMARY(?:\s*\(Confrontation\))?:(?:\*\*)?(.*?)(ACT 3 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
-    act3_match = re.search(r"(?:\*\*)?ACT 3 SUMMARY(?:\s*\(Resolution\))?:(?:\*\*)?(.*?)(SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
-    # Simpler, more direct regex for the current LLM output for SAMPLE SCENES
-    scenes_block_match = re.search(r"\*\*SAMPLE SCENES:\*\*\s*\n+(.*)", text, re.IGNORECASE | re.DOTALL)
+    # TITLE
+    m = re.search(r"MOVIE TITLE:\s*""?(.*?)""?\s*(?:MAIN CHARACTERS:|SYNOPSIS:|$)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        parsed["title"] = m.group(1).strip().strip('"')
 
-    if scenes_block_match:
-        logger.info(f"--- SCENES_BLOCK_MATCH.group(0) ---\\n{scenes_block_match.group(0)[:200]}...")
-        if scenes_block_match.group(1):
-            logger.info(f"--- SCENES_BLOCK_MATCH.group(1) (raw scene text) ---\n{scenes_block_match.group(1)[:500]}...")
-        else:
-            logger.info("--- SCENES_BLOCK_MATCH.group(1) IS EMPTY/NONE ---")
-    else:
-        logger.info("--- SCENES_BLOCK_MATCH IS NONE (PATTERN NOT FOUND) ---")
+    # CHARACTERS
+    m = re.search(r"MAIN CHARACTERS:(.*?)(?:SYNOPSIS:|ACT 1 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        for line in m.group(1).strip().splitlines():
+            line = line.strip().lstrip("*- ")
+            if not line: continue
+            parts = line.split("-", 1)
+            name = parts[0].strip()
+            desc = parts[1].strip() if len(parts) > 1 else ""
+            parsed["characters"].append({"name": name, "description": desc})
 
-    if title_match and title_match.group(1).strip():
-        parsed_data["title"] = title_match.group(1).strip().replace("**", "").replace('"', '').strip()
+    # SYNOPSIS
+    m = re.search(r"SYNOPSIS:(.*?)(?:ACT 1 SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
+    if m:
+        parsed["synopsis"] = m.group(1).strip()
 
-    if characters_match and characters_match.group(1).strip():
-        char_block = characters_match.group(1).strip()
-        # Regex specifically for "NAME - Description" format, also handles optional numbering/bullets
-        char_lines = re.findall(r"^(?:\\d+\\.|[\\*\\-])?\\s*([A-Z0-9 .\'\'-]+?)\\s*-\\s*(.+)$", char_block, re.MULTILINE | re.IGNORECASE)
-        for name, desc in char_lines:
-            parsed_data["characters"].append({"name": name.strip(), "description": desc.strip()})
-
-    if synopsis_match and synopsis_match.group(1).strip():
-        cleaned_synopsis = synopsis_match.group(1).strip()
-        cleaned_synopsis = re.sub(r"^\s*\*\*(.*?)\*\*\s*$", r"\1", cleaned_synopsis, flags=re.DOTALL).strip() # Remove surrounding ** if present
-        cleaned_synopsis = cleaned_synopsis.replace("**","") # Remove any other stray **
-        parsed_data["synopsis"] = cleaned_synopsis.strip()
-
-    act_map = {
-        "ACT 1 SUMMARY (Setup)": act1_match,
-        "ACT 2 SUMMARY (Confrontation)": act2_match,
-        "ACT 3 SUMMARY (Resolution)": act3_match,
-    }
-    for act_title_key, match_obj in act_map.items():
-        if match_obj and match_obj.group(1).strip():
-            summary_text = match_obj.group(1).strip().replace("**","") # Remove stray **
-            act_title_to_store = act_title_key # Default
-            llm_act_title_match = re.match(r"^(ACT \\d+ SUMMARY(?:\\s*\\(.*?\\))?):", match_obj.group(0).replace("**",""), re.IGNORECASE)
-            if llm_act_title_match:
-                 act_title_to_store = llm_act_title_match.group(1).strip()
-            
-            parsed_data["acts"].append({
-                "act_title": act_title_to_store,
-                "summary": summary_text.strip()
+    # ACTS
+    for i in range(1, 4):
+        m = re.search(rf"ACT {i} SUMMARY.*?:\s*(.*?)(?=ACT {i+1} SUMMARY|SAMPLE SCENES:|$)", text, re.IGNORECASE | re.DOTALL)
+        if m:
+            parsed["acts"].append({
+                "act_title": f"ACT {i} SUMMARY",
+                "summary": m.group(1).strip()
             })
 
-    if scenes_block_match and scenes_block_match.group(1): # Check group(1) directly for content
-        scenes_text = scenes_block_match.group(1).strip()
-        logger.info(f"--- SCENES_TEXT ---\n{scenes_text[:500]}...") # Log start of scenes_text
-        parsed_data["scenes"] = [] # Ensure scenes list is initialized here
+    # SCENES — strictly split only on “SCENE <number>:”
+    scene_block = re.search(r'SAMPLE SCENES[:\s]*(.*)', text, re.IGNORECASE | re.DOTALL)
+    if scene_block:
+        scenes_text = scene_block.group(1).strip()
+        # 1) split only on "SCENE <digits>:" markers (keeping the marker)
+        parts = re.split(r'(?i)(?=(?:SCENE\s+\d+:))', scenes_text)
+        for part in parts:
+            part = part.strip()
+            if not part or not re.match(r'(?i)^SCENE\s+\d+:', part):
+                continue   # ignore anything not starting with "SCENE X:"
+            lines = part.splitlines()
+            heading = lines[0].strip()            # e.g. "SCENE 3:"
+            body   = lines[1:]                     # everything after heading
+            desc_lines, dialogues = [], []
+            current_char, msgs = None, []
 
-        # More robust scene identification using finditer for headings
-        scene_heading_pattern = re.compile(
-            r"^(?:\*\*)?SCENE\s+\d+:.*?$|^\s*(?:INT\.|EXT\.)[\.\s][A-Z0-9 \\/-]+|" + # Changed first alternative to be more greedy for SCENE X: lines
-            r"^\s*\*\*SCENE HEADING:(?:\*\*)?",
-            re.MULTILINE | re.IGNORECASE
-        )
-        
-        matches = list(scene_heading_pattern.finditer(scenes_text))
-        logger.info(f"--- FOUND {len(matches)} SCENE HEADING MATCHES ---")
-        for i, match_obj in enumerate(matches):
-            logger.info(f"Match {i}: '{match_obj.group(0)}'")
-        
-        for i, match in enumerate(matches):
-            start_pos = match.end()
-            end_pos = matches[i+1].start() if (i + 1) < len(matches) else len(scenes_text)
-            
-            scene_content_full = scenes_text[start_pos:end_pos].strip()
-            current_heading = match.group(0).strip().replace("**","")
-            
-            current_scene_data = {
-                "scene_heading": current_heading,
-                "description": "", # Initialize description
-                "dialogue": []
-            }
+            for ln in body:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                # if it exactly matches uppercase+digits and ends with "- DAY"/"- NIGHT", treat as description line
+                if re.match(r'^(?:INT\.|EXT\.)', ln, re.IGNORECASE):
+                    desc_lines.append(ln)
+                    continue
+                # if it’s an uppercase line with ≤ 3 words, treat as speaker
+                if re.fullmatch(r'[A-Z0-9 \'\-\.]+', ln) and len(ln.split()) <= 3:
+                    if current_char and msgs:
+                        dialogues.append({
+                            "character": current_char,
+                            "text": ' '.join(msgs).strip()
+                        })
+                    current_char, msgs = ln, []
+                else:
+                    if current_char:
+                        msgs.append(ln)
+                    else:
+                        desc_lines.append(ln)
 
-            # The rest of the content is description (since dialogue is commented out)
-            # We need to be careful not to include the *next* scene's heading in current description
-            description_text = scene_content_full
-            
-            # Remove potential leading scene headings from the description_text if they were part of scene_content_full
-            # This can happen if the split was imperfect or if headings are very close.
-            # For now, we assume description_text is primarily non-heading lines after the matched heading.
-            
-            lines = description_text.split('\n')
-            final_description_lines = []
-            for line_raw in lines:
-                line = line_raw.strip()
-                if not line: continue
-                # Simple check: if a line looks like another scene heading, stop description here for this scene
-                if scene_heading_pattern.match(line) and line != current_heading:
-                    break 
-                final_description_lines.append(line)
-            
-            current_scene_data["description"] = "\n".join(final_description_lines).strip()
+            # flush last dialogue
+            if current_char and msgs:
+                dialogues.append({
+                    "character": current_char,
+                    "text": ' '.join(msgs).strip()
+                })
 
-            # Dialogue parsing is commented out for now
-            # if current_dialogue_character and accumulated_dialogue_text.strip(): ...
-            # if accumulated_description_lines: current_scene_data["description"] = ...
-            
-            if current_scene_data["scene_heading"] or current_scene_data["description"]:
-                parsed_data["scenes"].append(current_scene_data)
-            
-    # Fallback for characters if not found in MAIN CHARACTERS but present in dialogue
-    if not parsed_data["characters"] and parsed_data["scenes"]:
-        dialogue_chars = set()
-        for scene in parsed_data["scenes"]:
-            for diag_line in scene["dialogue"]:
-                dialogue_chars.add(diag_line["character"])
-        parsed_data["characters"] = [{"name": name, "description": "Appeared in dialogue."} for name in sorted(list(dialogue_chars))]
-        
-    return parsed_data
+            parsed["scenes"].append({
+                "scene_heading": heading,
+                "description": ' '.join(desc_lines).strip() or None,
+                "dialogue": dialogues
+            })
+
+    # Fallback characters from dialogues
+    if not parsed["characters"]:
+        chars = {d["character"] for s in parsed["scenes"] for d in s["dialogue"]}
+        parsed["characters"] = [{"name": c, "description": ""} for c in sorted(chars)]
+
+    return parsed
+
 
 @app.get("/")
 async def root():
