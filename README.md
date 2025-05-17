@@ -12,6 +12,7 @@ An advanced AI system that generates movie scripts based on themes using fine-tu
 
 ## Project Structure
 
+![Alt text](MovieLLMArchitecture.png)
 ```
 MovieLLM/
 ├── data/                  # Script data and processed datasets
