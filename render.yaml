@@ -7,5 +7,15 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
-    healthCheckPath: /
-    autoDeploy: true 
+    healthCheckPath: /docs
+    autoDeploy: true
+    numInstances: 1
+    disk:
+      name: tmp
+      mountPath: /tmp
+      sizeGB: 1
+    scaling:
+      minInstances: 1
+      maxInstances: 1
+    buildCommand: docker build -t moviellm-backend .
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT 
