@@ -40,7 +40,7 @@ function App() {
     setError('');
     setGeneratedScript(null);
     try {
-      const response = await axios.post('http://localhost:8000/generate', { 
+      const response = await axios.post(`${process.env.REACT_APP_API_URL || '/api'}/generate`, { 
         theme: theme,
       });
       setGeneratedScript(response.data);
