@@ -7,6 +7,8 @@ services:
     envVars:
       - key: GROQ_API_KEY
         sync: false
+      - key: PORT
+        value: 8000
     healthCheckPath: /docs
     autoDeploy: true
     numInstances: 1
@@ -18,4 +20,7 @@ services:
       minInstances: 1
       maxInstances: 1
     buildCommand: docker build -t moviellm-backend .
-    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT 
+    startCommand: uvicorn src.api.main:app --host 0.0.0.0 --port $PORT --workers 1 --limit-concurrency 10 --timeout-keep-alive 30
+    resources:
+      cpu: 0.1
+      memory: 512Mi 
